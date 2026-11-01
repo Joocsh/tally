@@ -69,6 +69,7 @@ button{cursor:pointer}
 .hero::after{content:"";position:absolute;right:-60px;top:-60px;width:200px;height:200px;border-radius:50%;border:28px solid currentColor;opacity:.07;pointer-events:none}
 .hero .lbl{font-size:12px;letter-spacing:.08em;text-transform:uppercase;opacity:.8;font-weight:500}
 .hero .big{font-family:var(--font-display);font-weight:700;font-size:clamp(38px,11vw,52px);letter-spacing:-.035em;line-height:1;margin-top:6px}
+.hero .carry{font-size:13px;opacity:.85;margin-top:8px}
 .hero .big small{font-size:.42em;letter-spacing:0;font-weight:500;opacity:.8;margin-right:6px;vertical-align:.55em}
 .hero .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .hero .cell{background:rgba(255,255,255,.12);border-radius:var(--r-md);padding:10px 12px;min-width:0}
@@ -236,6 +237,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div>
         <div class="lbl" id="heroLbl">Te queda este mes</div>
         <div class="big num" id="heroBig"><small>US$</small>0.00</div>
+        <div class="carry num" id="heroCarry" hidden></div>
       </div>
       <div class="row">
         <div class="cell"><div class="lbl">Ingresos</div><div class="v num" id="heroIn">0.00</div></div>
@@ -326,6 +328,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <div class="seg" id="curSeg" role="group" aria-label="Moneda">
         <button data-v="US$" aria-pressed="true">Dólares US$</button>
         <button data-v="C$" aria-pressed="false">Córdobas C$</button>
+      </div>
+    </div>
+    <div class="sheet">
+      <div class="field">
+        <label for="startBal">Saldo inicial</label>
+        <div class="money"><span class="cur">US$</span><input id="startBal" inputmode="decimal" placeholder="0.00" autocomplete="off"></div>
+        <div class="hint">El dinero que ya tenías antes de empezar a anotar en Tally. Se suma a tu saldo disponible.</div>
       </div>
     </div>
     <div class="sheet">
@@ -434,7 +443,7 @@ const keyName=k=>MES[+k.slice(5,7)-1];
 const daysIn=k=>new Date(+k.slice(0,4),+k.slice(5,7),0).getDate();
 
 /* ---------- state ---------- */
-const DEFAULT_SETTINGS={currency:"US$",goal:20,budgets:{}};
+const DEFAULT_SETTINGS={currency:"US$",goal:20,budgets:{},start:0};
 let S={settings:{...DEFAULT_SETTINGS},months:{}};
 let view={tab:"home",month:curKey,filter:"all",q:""};
 let mode="loading"; // loading | db | local
@@ -537,6 +546,11 @@ function stats(k){
   tx.forEach(t=>{if(t.t==="i"){inc+=t.amt}else{exp+=t.amt;byCat[t.cat]=(byCat[t.cat]||0)+t.amt;(t.need?need+=t.amt:want+=t.amt);const d=+t.d.slice(8,10);if(d>=1&&d<=byDay.length)byDay[d-1]+=t.amt}});
   return {tx,inc,exp,need,want,byCat,byDay,save:inc-exp,rate:inc>0?(inc-exp)/inc:0};
 }
+function carryBefore(k){
+  let c=hasReal()?(+S.settings.start||0):0;
+  Object.keys(data()).forEach(m=>{if(m<k)c+=stats(m).save});
+  return Math.round(c*100)/100;
+}
 const sortedCats=byCat=>Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
 
 /* ---------- render helpers ---------- */
@@ -580,9 +594,12 @@ function renderHeader(){
 }
 function renderHome(){
   const s=stats(view.month), isCur=view.month===curKey, goal=+S.settings.goal||0;
-  $("#heroLbl").textContent=isCur?"Te queda este mes":`Balance de ${keyName(view.month)}`;
+  const carry=carryBefore(view.month), total=carry+s.save;
+  $("#heroLbl").textContent=isCur?"Disponible":`Saldo al cierre de ${keyName(view.month)}`;
+  $("#heroBig").innerHTML=`<small>${cur()}</small>${total<0?"−":""}${nf.format(Math.abs(total))}`;
+  const hc=$("#heroCarry"); hc.hidden=!carry;
+  hc.textContent=`Incluye ${carry<0?"−":""}${money(Math.abs(carry))} que traías de meses anteriores`;
   const neg=s.save<0;
-  $("#heroBig").innerHTML=`<small>${cur()}</small>${neg?"−":""}${nf.format(Math.abs(s.save))}`;
   $("#heroIn").textContent=money(s.inc); $("#heroOut").textContent=money(s.exp);
   const rate=Math.round(s.rate*100);
   $("#goalTxt").textContent=s.inc?(neg?`Gastaste ${money(-s.save)} más de lo que entró`:`Ahorras el ${rate}% de tus ingresos`):"Anota tus ingresos para medir tu ahorro";
@@ -675,7 +692,8 @@ function renderSettings(){
     bx.innerHTML=CATS.g.map(c=>`<div class="brow">${tile(c)}<label for="b-${c.id}">${c.n}</label><div class="money"><span class="cur">${cur()}</span><input id="b-${c.id}" data-b="${c.id}" inputmode="decimal" placeholder="Sin límite"></div></div>`).join("");
     bx.dataset.built="1";
   }
-  $$("#budgets .cur").forEach(e=>e.textContent=cur());
+  $$("#v-settings .cur").forEach(e=>e.textContent=cur());
+  if(document.activeElement!==$("#startBal"))$("#startBal").value=+S.settings.start?S.settings.start:"";
   $$("#budgets input").forEach(i=>{if(document.activeElement!==i){const v=(S.settings.budgets||{})[i.dataset.b];i.value=v?v:""}});
   const st=$("#storeStatus");
   if(mode==="db"){st.style.setProperty("--c","var(--pos)");st.textContent="Guardado en tu cuenta. Tus datos son privados y te siguen en cualquier dispositivo donde abras esta app."}
@@ -775,6 +793,7 @@ $("#fDel").addEventListener("click",()=>{
 /* ---------- settings ---------- */
 $("#curSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;S.settings={...S.settings,currency:b.dataset.v};persistSettings();render()});
 let goalT;$("#goalRange").addEventListener("input",e=>{S.settings={...S.settings,goal:+e.target.value};$("#goalVal").textContent=`${e.target.value}%`;clearTimeout(goalT);goalT=setTimeout(persistSettings,500)});
+$("#startBal").addEventListener("change",e=>{const v=parseAmt(e.target.value);S.settings={...S.settings,start:isFinite(v)?v:0};persistSettings();e.target.value=S.settings.start||"";toast("Saldo inicial guardado")});
 $("#budgets").addEventListener("change",e=>{const i=e.target.closest("input[data-b]");if(!i)return;const v=parseAmt(i.value);const b={...(S.settings.budgets||{})};
   if(v>0)b[i.dataset.b]=v;else delete b[i.dataset.b];S.settings={...S.settings,budgets:b};persistSettings();i.value=v>0?v:"";toast("Presupuesto guardado")});
 
